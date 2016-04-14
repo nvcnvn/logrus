@@ -70,6 +70,10 @@ func (logger *Logger) WithError(err error) *Entry {
 	return NewEntry(logger).WithError(err)
 }
 
+func (logger *Logger) Output(calldepth int, s string) error {
+	return NewEntry(logger).Output(calldepth+1, s)
+}
+
 func (logger *Logger) Debugf(format string, args ...interface{}) {
 	if logger.Level >= DebugLevel {
 		NewEntry(logger).Debugf(format, args...)

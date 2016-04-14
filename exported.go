@@ -72,6 +72,10 @@ func WithFields(fields Fields) *Entry {
 	return std.WithFields(fields)
 }
 
+func Output(calldepth int, s string) error {
+	return std.Output(calldepth+1, s)
+}
+
 // Debug logs a message at level Debug on the standard logger.
 func Debug(args ...interface{}) {
 	std.Debug(args...)

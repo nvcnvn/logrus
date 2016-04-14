@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -29,6 +30,12 @@ type Entry struct {
 
 	// Message passed to Debug, Info, Warn, Error, Fatal or Panic
 	Message string
+
+	// File name when using Output medthod with calldepth > 0
+	File string
+
+	// Line number in File when using Output medthod with calldepth > 0
+	Line int
 }
 
 func NewEntry(logger *Logger) *Entry {
@@ -80,10 +87,18 @@ func (entry *Entry) WithFields(fields Fields) *Entry {
 
 // This function is not declared with a pointer value because otherwise
 // race conditions will occur when using multiple goroutines
-func (entry Entry) log(level Level, msg string) {
+func (entry Entry) log(level Level, msg string, calldepth int) error {
 	entry.Time = time.Now()
 	entry.Level = level
 	entry.Message = msg
+
+	if calldepth > 0 {
+		_, file, line, ok := runtime.Caller(calldepth)
+		if ok {
+			entry.File = file
+			entry.Line = line
+		}
+	}
 
 	if err := entry.Logger.Hooks.Fire(level, &entry); err != nil {
 		entry.Logger.mu.Lock()
@@ -91,11 +106,22 @@ func (entry Entry) log(level Level, msg string) {
 		entry.Logger.mu.Unlock()
 	}
 
+	// To avoid Entry#log() returning a value that only would make sense for
+	// panic() to use in Entry#Panic(), we avoid the allocation by checking
+	// directly here.
+	defer func() {
+		if level <= PanicLevel {
+			panic(&entry)
+		}
+	}()
+
 	reader, err := entry.Reader()
 	if err != nil {
 		entry.Logger.mu.Lock()
+		defer entry.Logger.mu.Unlock()
+
 		fmt.Fprintf(os.Stderr, "Failed to obtain reader, %v\n", err)
-		entry.Logger.mu.Unlock()
+		return err
 	}
 
 	entry.Logger.mu.Lock()
@@ -104,19 +130,26 @@ func (entry Entry) log(level Level, msg string) {
 	_, err = io.Copy(entry.Logger.Out, reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write to log, %v\n", err)
+		return err
 	}
 
-	// To avoid Entry#log() returning a value that only would make sense for
-	// panic() to use in Entry#Panic(), we avoid the allocation by checking
-	// directly here.
-	if level <= PanicLevel {
-		panic(&entry)
-	}
+	return nil
+}
+
+// Output will log the message s with current Level of logger. With calldepth > 0 Output will include
+// file and line of the caller base on calldepth.
+func (entry *Entry) Output(calldepth int, s string) error {
+	level := DebugLevel
+	entry.Logger.mu.Lock()
+	level = entry.Logger.Level
+	entry.Logger.mu.Unlock()
+
+	return entry.log(level, s, calldepth+1)
 }
 
 func (entry *Entry) Debug(args ...interface{}) {
 	if entry.Logger.Level >= DebugLevel {
-		entry.log(DebugLevel, fmt.Sprint(args...))
+		entry.log(DebugLevel, fmt.Sprint(args...), 0)
 	}
 }
 
@@ -126,13 +159,13 @@ func (entry *Entry) Print(args ...interface{}) {
 
 func (entry *Entry) Info(args ...interface{}) {
 	if entry.Logger.Level >= InfoLevel {
-		entry.log(InfoLevel, fmt.Sprint(args...))
+		entry.log(InfoLevel, fmt.Sprint(args...), 0)
 	}
 }
 
 func (entry *Entry) Warn(args ...interface{}) {
 	if entry.Logger.Level >= WarnLevel {
-		entry.log(WarnLevel, fmt.Sprint(args...))
+		entry.log(WarnLevel, fmt.Sprint(args...), 0)
 	}
 }
 
@@ -142,20 +175,20 @@ func (entry *Entry) Warning(args ...interface{}) {
 
 func (entry *Entry) Error(args ...interface{}) {
 	if entry.Logger.Level >= ErrorLevel {
-		entry.log(ErrorLevel, fmt.Sprint(args...))
+		entry.log(ErrorLevel, fmt.Sprint(args...), 0)
 	}
 }
 
 func (entry *Entry) Fatal(args ...interface{}) {
 	if entry.Logger.Level >= FatalLevel {
-		entry.log(FatalLevel, fmt.Sprint(args...))
+		entry.log(FatalLevel, fmt.Sprint(args...), 0)
 	}
 	os.Exit(1)
 }
 
 func (entry *Entry) Panic(args ...interface{}) {
 	if entry.Logger.Level >= PanicLevel {
-		entry.log(PanicLevel, fmt.Sprint(args...))
+		entry.log(PanicLevel, fmt.Sprint(args...), 0)
 	}
 	panic(fmt.Sprint(args...))
 }

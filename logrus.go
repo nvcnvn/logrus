@@ -106,6 +106,8 @@ type StdLogger interface {
 	Panic(...interface{})
 	Panicf(string, ...interface{})
 	Panicln(...interface{})
+
+	Output(int, string) error
 }
 
 // The FieldLogger interface generalizes the Entry and Logger types
